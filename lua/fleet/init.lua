@@ -704,15 +704,31 @@ local function setup_autocmds()
     })
 end
 
+-- function M.lualine_component()
+--     if _G.active_harpoon_list then
+--         local harpoon_module = require("harpoon")
+--         local marks = harpoon_module.get_mark_config().marks
+--         local count = #marks
+--
+--         return "⚓ " .. _G.active_harpoon_list .. " (" .. count .. ")"
+--     else
+--         return "⚓ No List"
+--     end
+-- end
+
 function M.lualine_component()
-    if _G.active_harpoon_list then
+    if *G.active*harpoon_list then
         local harpoon_module = require("harpoon")
         local marks = harpoon_module.get_mark_config().marks
         local count = #marks
-
-        return "⚓ " .. _G.active_harpoon_list .. " (" .. count .. ")"
+        
+        -- Split by ":" and get the second part
+        local parts = vim.split(*G.active*harpoon_list, ":")
+        local list_name = parts[2] or *G.active*harpoon_list
+        
+        return "" .. list_name .. ""
     else
-        return "⚓ No List"
+        return "No List"
     end
 end
 
