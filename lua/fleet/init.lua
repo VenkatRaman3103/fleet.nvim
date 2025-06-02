@@ -717,15 +717,14 @@ end
 -- end
 
 function M.lualine_component()
-    if *G.active*harpoon_list then
+    if _G.active_harpoon_list then
         local harpoon_module = require("harpoon")
         local marks = harpoon_module.get_mark_config().marks
         local count = #marks
-        
-        -- Split by ":" and get the second part
-        local parts = vim.split(*G.active*harpoon_list, ":")
-        local list_name = parts[2] or *G.active*harpoon_list
-        
+
+        local parts = vim.split(_G.active_harpoon_list, ":")
+        local list_name = parts[2] or _G.active_harpoon_list
+
         return "" .. list_name .. ""
     else
         return "No List"
