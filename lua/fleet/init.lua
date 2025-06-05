@@ -704,15 +704,24 @@ local function setup_autocmds()
     })
 end
 
+-- function M.lualine_component()
+--     if _G.active_harpoon_list then
+--         local harpoon_module = require("harpoon")
+--         local marks = harpoon_module.get_mark_config().marks
+--         local count = #marks
+--
+--         return "⚓ " .. _G.active_harpoon_list .. " (" .. count .. ")"
+--     else
+--         return "⚓ No List"
+--     end
+-- end
+
 function M.lualine_component()
     if _G.active_harpoon_list then
-        local harpoon_module = require("harpoon")
-        local marks = harpoon_module.get_mark_config().marks
-        local count = #marks
-
-        return "⚓ " .. _G.active_harpoon_list .. " (" .. count .. ")"
+        local list_name = _G.active_harpoon_list:match("([^:]+)$")
+        return list_name
     else
-        return "⚓ No List"
+        return "No List"
     end
 end
 
