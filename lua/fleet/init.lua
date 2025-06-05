@@ -69,19 +69,16 @@ local function get_project_root()
     end
 
     debug_log("Detecting project root")
-
     local git_root = vim.fn.system("git rev-parse --show-toplevel 2>/dev/null"):gsub("%s+$", "")
     if git_root ~= "" and vim.v.shell_error == 0 then
         git_root = normalize_path(git_root)
         state.harpoon_state.project_root_cache = git_root
-        debug_log("Found git root: " .. git_root)
         return git_root
     end
 
     local cwd = vim.fn.getcwd()
     cwd = normalize_path(cwd)
     state.harpoon_state.project_root_cache = cwd
-    debug_log("Using cwd as root: " .. cwd)
     return state.harpoon_state.project_root_cache
 end
 
@@ -96,45 +93,26 @@ local function get_project_id()
     local git_origin = vim.fn.system("git config --get remote.origin.url 2>/dev/null"):gsub("%s+$", "")
     if git_origin ~= "" and vim.v.shell_error == 0 then
         project_name = git_origin:match("([^/]+)%.git$") or git_origin:match("[^/]+$")
-        debug_log("Got project name from git origin: " .. (project_name or "nil"))
+    end
+
+    if not project_name or project_name == "" then
+        local parent_dir = vim.fn.fnamemodify(project_path, ":h:t")
+        local current_dir = vim.fn.fnamemodify(project_path, ":t")
+        project_name = parent_dir .. "-" .. current_dir
     end
 
     if not project_name or project_name == "" then
         project_name = vim.fn.fnamemodify(project_path, ":t")
-        debug_log("Using root directory name: " .. project_name)
     end
 
     project_name = normalize_path(project_name)
     state.harpoon_state.project_id_cache = project_name
-    debug_log("Final project ID: " .. project_name)
     return project_name
-end
-
-local function get_workspace_context()
-    local project_root = get_project_root()
-    local current_dir = vim.fn.getcwd()
-
-    if current_dir == project_root then
-        return nil
-    end
-
-    local relative_path = vim.fn.fnamemodify(current_dir, ":.")
-    if current_dir:find(project_root, 1, true) == 1 then
-        relative_path = current_dir:sub(#project_root + 2) -- +2 to skip the trailing slash
-    end
-
-    return relative_path:match("([^/]+)")
 end
 
 local function get_default_list_name()
     local project_id = get_project_id()
-    local context = get_workspace_context()
-
-    if context then
-        return project_id .. ":" .. context
-    else
-        return project_id
-    end
+    return project_id
 end
 
 local function save_harpoon_list(name)
@@ -259,11 +237,8 @@ local function get_project_lists()
             local list_name = file:gsub("%.json$", "")
             list_name = normalize_path(list_name)
 
-            if list_name == project_id or list_name:match("^" .. project_id .. ":") then
+            if list_name:match("^" .. project_id .. ":") then
                 local display_name = list_name:gsub("^" .. project_id .. ":", "")
-                if display_name == "" then
-                    display_name = "main"
-                end
                 table.insert(lists, {
                     full_name = list_name,
                     display_name = display_name
@@ -308,7 +283,6 @@ end
 local function initialize_default_list()
     debug_log("Initializing default list")
     local project_lists = get_project_lists()
-    local context = get_workspace_context()
 
     if #project_lists == 0 then
         state.harpoon_state.current_list_counter = 1
@@ -318,19 +292,7 @@ local function initialize_default_list()
 
     state.harpoon_state.current_list_counter = find_highest_list_number()
 
-    if context then
-        local context_list_name = get_project_id() .. ":" .. context
-        for _, list in ipairs(project_lists) do
-            if list.full_name == context_list_name then
-                debug_log("Loading context-specific list: " .. context_list_name)
-                load_harpoon_list(list.full_name)
-                return
-            end
-        end
-    end
-
     if #project_lists > 0 then
-        debug_log("Loading first available list: " .. project_lists[1].full_name)
         load_harpoon_list(project_lists[1].full_name)
     end
 end
@@ -377,10 +339,11 @@ local function setup_keymaps()
         mark.add_file()
 
         if not _G.active_harpoon_list then
-            local default_list_name = get_default_list_name()
-            local list_name = prompt_for_list_name(default_list_name)
+            local project_id = get_project_id()
+            local list_name = prompt_for_list_name("default")
+            local full_name = format_list_name(project_id, list_name)
 
-            local success, _, display_name = save_harpoon_list(list_name)
+            local success, _, display_name = save_harpoon_list(full_name)
             if success then
                 vim.notify(fileName .. " added to new list '" .. display_name .. "'")
             else
@@ -388,8 +351,8 @@ local function setup_keymaps()
             end
         else
             save_harpoon_list(_G.active_harpoon_list)
-            local _, list_part = parse_list_name(_G.active_harpoon_list)
-            local display_name = list_part or _G.active_harpoon_list
+            local _, _, display_name = parse_list_name(_G.active_harpoon_list)
+            display_name = display_name or _G.active_harpoon_list
             vim.notify(fileName .. " added to list '" .. display_name .. "'")
         end
     end, { desc = "Add File to Current Fleet List" })
@@ -397,49 +360,43 @@ local function setup_keymaps()
     vim.keymap.set("n", config.keymaps.new_list, function()
         mark.clear_all()
         local project_id = get_project_id()
-        local context = get_workspace_context()
         local highest_num = find_highest_list_number()
         local next_num = highest_num + 1
 
         state.harpoon_state.current_list_counter = next_num
 
-        local default_suggestions = {}
-        if context then
-            table.insert(default_suggestions, "Use context name: " .. context .. "_list_" .. next_num)
-            table.insert(default_suggestions, "Use simple context: " .. context)
-        end
-        table.insert(default_suggestions, "Use default name: list_" .. next_num)
-        table.insert(default_suggestions, "Choose custom name")
-
-        vim.ui.select(default_suggestions, {
+        vim.ui.select({
+            "Use default name: list_" .. next_num,
+            "Choose custom name"
+        }, {
             prompt = "New empty list name:",
         }, function(choice)
             if not choice then return end
 
-            local list_name
-            if choice:match("Use context name:") then
-                list_name = context .. "_list_" .. next_num
-            elseif choice:match("Use simple context:") then
-                list_name = context
-            elseif choice:match("Use default") then
-                list_name = "list_" .. next_num
-            elseif choice:match("Choose custom") then
-                local custom_name = vim.fn.input("Enter custom list name: ")
-                if custom_name ~= "" then
-                    list_name = normalize_path(custom_name)
-                else
-                    vim.notify("Operation cancelled - no name provided", vim.log.levels.WARN)
-                    return
-                end
-            end
-
-            if list_name then
+            if choice:match("Use default") then
+                local list_name = "list_" .. next_num
                 local full_name = format_list_name(project_id, list_name)
+
                 local success, _, display_name = save_harpoon_list(full_name)
                 if success then
                     vim.notify("Created new empty list '" .. display_name .. "'")
                 else
                     vim.notify("Failed to create new list", vim.log.levels.ERROR)
+                end
+            elseif choice:match("Choose custom") then
+                local custom_name = vim.fn.input("Enter custom list name: ")
+                if custom_name ~= "" then
+                    custom_name = normalize_path(custom_name)
+                    local full_name = format_list_name(project_id, custom_name)
+
+                    local success, _, display_name = save_harpoon_list(full_name)
+                    if success then
+                        vim.notify("Created new empty list '" .. display_name .. "'")
+                    else
+                        vim.notify("Failed to create new list", vim.log.levels.ERROR)
+                    end
+                else
+                    vim.notify("Operation cancelled - no name provided", vim.log.levels.WARN)
                 end
             end
         end)
@@ -564,16 +521,19 @@ local function setup_keymaps()
 
     vim.keymap.set("n", config.keymaps.save_list, function()
         if not _G.active_harpoon_list then
-            local default_list_name = get_default_list_name()
-            local list_name = vim.fn.input("Save Fleet list as (default: " .. default_list_name .. "): ")
+            local project_id = get_project_id()
+            local default_name = "default"
+            local list_name = vim.fn.input("Save Fleet list as (default: " .. default_name .. "): ")
 
             if list_name == "" then
-                list_name = default_list_name
+                list_name = default_name
             else
                 list_name = normalize_path(list_name)
             end
 
-            local success, project_id, display_name = save_harpoon_list(list_name)
+            local full_name = format_list_name(project_id, list_name)
+
+            local success, _, display_name = save_harpoon_list(full_name)
             if success then
                 vim.notify("Fleet list saved as '" .. display_name .. "' for project '" .. project_id .. "'")
             else
@@ -694,7 +654,6 @@ local function setup_commands()
     vim.api.nvim_create_user_command("FleetProjectInfo", function()
         local project_root = get_project_root()
         local project_id = get_project_id()
-        local context = get_workspace_context()
         local lists = get_project_lists()
         local lists_str = ""
 
@@ -705,7 +664,6 @@ local function setup_commands()
         local info = "Fleet Project Info:\n" ..
             "Project Root: " .. project_root .. "\n" ..
             "Project ID: " .. project_id .. "\n" ..
-            "Workspace Context: " .. (context or "none") .. "\n" ..
             "Active List: " .. (_G.active_harpoon_list or "none") .. "\n" ..
             "Available Lists:" .. (lists_str ~= "" and lists_str or " none")
 
@@ -737,83 +695,65 @@ local function setup_autocmds()
             if state.harpoon_state.last_cwd ~= current_dir then
                 state.harpoon_state.last_cwd = current_dir
                 state.harpoon_state.project_root_cache = nil
+                state.harpoon_state.project_id_cache = nil
                 state.harpoon_state.project_lists_cache = nil
+
+                vim.defer_fn(initialize_default_list, 100)
             end
-        end,
+        end
     })
-
-    if state.config.auto_save then
-        vim.api.nvim_create_autocmd({ "BufWritePost" }, {
-            callback = function()
-                if _G.active_harpoon_list then
-                    save_harpoon_list(_G.active_harpoon_list)
-                    debug_log("Auto-saved list: " .. _G.active_harpoon_list)
-                end
-            end,
-        })
-    end
 end
 
-local function get_fleet_status()
-    if not _G.active_harpoon_list then
-        return ""
-    end
+-- function M.lualine_component()
+--     if _G.active_harpoon_list then
+--         local harpoon_module = require("harpoon")
+--         local marks = harpoon_module.get_mark_config().marks
+--         local count = #marks
+--
+--         return "⚓ " .. _G.active_harpoon_list .. " (" .. count .. ")"
+--     else
+--         return "⚓ No List"
+--     end
+-- end
 
-    local harpoon_module = require("harpoon")
-    local marks = harpoon_module.get_mark_config().marks
-    local count = #marks
+function M.lualine_component()
+    if _G.active_harpoon_list then
+        local harpoon_module = require("harpoon")
+        local marks = harpoon_module.get_mark_config().marks
+        local count = #marks
 
-    local _, list_part = parse_list_name(_G.active_harpoon_list)
-    local display_name = list_part or _G.active_harpoon_list
+        local parts = vim.split(_G.active_harpoon_list, ":")
+        local list_name = parts[2] or _G.active_harpoon_list
 
-    if count == 0 then
-        return "Fleet: " .. display_name .. " (empty)"
+        return "" .. list_name .. ""
     else
-        return "Fleet: " .. display_name .. " (" .. count .. ")"
+        return "No List"
     end
 end
 
-function M.setup(opts)
-    opts = opts or {}
-    state.config = vim.tbl_deep_extend("force", default_config, opts)
+function M.setup(user_config)
+    state.config = vim.tbl_deep_extend("force", default_config, user_config or {})
 
-    _G.active_harpoon_list = nil
+    if not _G.harpoon_state then
+        _G.harpoon_state = state.harpoon_state
+    end
+
+    _G.active_harpoon_list = _G.active_harpoon_list or nil
 
     setup_keymaps()
+    setup_status_update()
     setup_commands()
     setup_autocmds()
-    setup_status_update()
 
     vim.defer_fn(function()
         initialize_default_list()
+        debug_log("Fleet plugin initialized")
     end, 100)
 
-    debug_log("Fleet plugin initialized")
-end
-
-function M.get_status()
-    return get_fleet_status()
-end
-
-function M.save_current_list(name)
-    if name then
-        return save_harpoon_list(name)
-    elseif _G.active_harpoon_list then
-        return save_harpoon_list(_G.active_harpoon_list)
+    if state.config.debug_mode then
+        vim.notify("Fleet: Enhanced Harpoon plugin loaded successfully")
     end
-    return false
 end
 
-function M.load_list(name)
-    return load_harpoon_list(name)
-end
-
-function M.get_project_lists()
-    return get_project_lists()
-end
-
-function M.get_current_list()
-    return _G.active_harpoon_list
-end
-
+return M
 return M
