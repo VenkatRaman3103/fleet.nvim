@@ -2,6 +2,8 @@
 
 A powerful enhancement layer for [Harpoon](https://github.com/ThePrimeagen/harpoon) that adds persistent file lists with project-based organization and enhanced navigation capabilities.
 
+https://github.com/user-attachments/assets/034c7fb8-a4db-458a-8ede-1b0b95f025be
+
 Fleet transforms Harpoon into a sophisticated file management system by adding:
 
 - **Persistent lists** that survive Neovim sessions
